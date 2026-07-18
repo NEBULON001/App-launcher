@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime config
+config.json
+
+# Build artifacts
+*.exe
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# WorkBuddy internal
+.workbuddy/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
