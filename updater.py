@@ -17,7 +17,7 @@ from dataclasses import dataclass
 # Constants
 # ---------------------------------------------------------------------------
 
-CURRENT_VERSION = "1.1"
+CURRENT_VERSION = "1.2"
 REPO = "NEBULON001/App-launcher"
 
 _API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"

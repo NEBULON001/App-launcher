@@ -793,39 +793,6 @@ class LauncherApp:
             bd=0,
         ).pack(pady=6, anchor="w", padx=48)
 
-        # --- Splash duration scale ---
-        dur_var = tk.DoubleVar(
-            value=float(settings.get("splash_duration", 2.0))
-        )
-
-        def _on_dur_change(val: str) -> None:
-            v = round(float(val), 1)
-            settings.set("splash_duration", v)
-            settings.save()
-            try:
-                dur_val_label.configure(text=f"{v:.1f} 秒")
-            except tk.TclError:
-                pass
-
-        tk.Label(
-            win, text="开屏动画时长", font=FONT_LABEL, bg=C_BG, fg=C_SUBTEXT
-        ).pack(anchor="w", padx=48, pady=(10, 0))
-        dur_row = tk.Frame(win, bg=C_BG)
-        dur_row.pack(fill="x", padx=48)
-        dur_val_label = tk.Label(
-            dur_row, text=f"{dur_var.get():.1f} 秒",
-            font=FONT_SMALL, bg=C_BG, fg=C_BLUE, width=8, anchor="e",
-        )
-        dur_val_label.pack(side="right")
-        tk.Scale(
-            dur_row,
-            from_=0.5, to=5.0, resolution=0.1, orient="horizontal",
-            variable=dur_var, command=_on_dur_change,
-            bg=C_BG, fg=C_TEXT, troughcolor=C_SURFACE,
-            highlightthickness=0, sliderrelief="flat",
-            font=FONT_SMALL, cursor="hand2",
-        ).pack(side="left", fill="x", expand=True)
-
         # --- Glass alpha scale ---
         alpha_var = tk.DoubleVar(
             value=float(settings.get("glass_alpha", 0.62))

@@ -58,6 +58,9 @@ def resource_path(relative_path: str) -> str:
 # Launcher icon shipped under icons/, bundled into the exe via --add-data.
 ICON_FILE = resource_path("icons/app_launcher.ico")
 
+# Opening-animation frame sequence shipped under assets/splash/.
+SPLASH_FRAMES_DIR = resource_path("assets/splash")
+
 
 # ---------------------------------------------------------------------------
 # Directory bootstrap

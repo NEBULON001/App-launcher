@@ -23,7 +23,6 @@ from paths import SETTINGS_FILE
 _DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_check_update": True,
     "show_splash": True,        # 是否显示开屏动画
-    "splash_duration": 2.0,     # splash 总时长（秒）
     "glass_alpha": 0.62,        # 毛玻璃蒙版透明度 0.3-0.9
     "glass_blur_radius": 24,    # 毛玻璃模糊半径 5-50
 }

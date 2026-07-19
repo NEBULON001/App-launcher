@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('icons/app_launcher.ico', 'icons')],
+    datas=[('icons/app_launcher.ico', 'icons'), ('assets/splash', 'assets/splash')],
     hiddenimports=['win32com', 'pythoncom', 'pystray', 'PIL', 'PIL.ImageTk'],
     hookspath=[],
     hooksconfig={},

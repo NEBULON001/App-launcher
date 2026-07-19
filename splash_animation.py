@@ -5,46 +5,84 @@ Public interface (stable):
     show_splash(root: tk.Tk, callback: Callable[[], None] | None = None) -> None
 
 Current implementation:
-    Frosted-glass Toplevel (Acrylic / blur-behind via glass_effect),
-    centred on screen, with an animated glowing title and a progress bar.
-    Fades in → holds → fades out → fires callback.
+    Plays a bundled JPEG frame sequence (assets/splash/frame_*.jpg) full-screen
+    on a borderless topmost Toplevel.  The frame rate is fixed at ~30 fps and
+    the animation duration is determined entirely by the video itself, so there
+    is no longer a "splash duration" setting.  Frames are scaled to fit the
+    screen while preserving the native 4:3 aspect ratio and centred on a black
+    background.
+
+    Robustness contract: ``callback`` is *never* blocked.  If the splash is
+    disabled, the frame directory is missing/empty, or any error occurs while
+    building the window or decoding a frame, the callback is fired immediately
+    so the launcher can continue starting up.
 """
 
 from __future__ import annotations
 
-import math
+import glob
+import os
 import tkinter as tk
 from typing import Callable, Optional
 
+from paths import SPLASH_FRAMES_DIR
 from settings import settings
 
 
 # ---------------------------------------------------------------------------
-# Timing constants
+# Constants
 # ---------------------------------------------------------------------------
-_FADE_STEPS: int = 24
-_FADE_MS: int = 25           # ms per fade step (~600ms total fade)
-_HOLD_MS: int = 1400         # ms at full opacity
-_PROGRESS_MS: int = 20       # ms per progress-bar tick
-_GLOW_STEPS: int = 40        # glow pulse cycle steps
-_GLOW_MS: int = 35           # ms per glow step
-
-# Design
-_W, _H = 480, 260
-_BG = "#0d0d1a"              # near-black (used when glass fails)
-_GLASS_TINT = "#0d0d1a"
-_TEXT_MAIN = "#e0e8ff"
-_TEXT_SUB = "#5a6080"
-_ACCENT = "#89b4fa"          # blue
-_BAR_BG = "#1e2040"
-_BAR_FG = "#89b4fa"
+_FRAME_MS: int = 33               # ms per frame (~30 fps, int(1000/30))
+_FADE_STEPS: int = 6              # alpha fade-out steps
+_FADE_MS: int = 20                # ms per fade-out step
+_NATIVE_W, _NATIVE_H = 960, 720   # native frame size (4:3)
 
 
 def show_splash(
     root: tk.Tk,
     callback: Optional[Callable[[], None]] = None,
 ) -> None:
-    # ---- Read settings (silent fallback to defaults on any error) ----
+    state = {"done": False, "photo": None}
+
+    def _finish() -> None:
+        """Fade the splash out, destroy it, then fire the callback.
+
+        Idempotent – safe to call repeatedly; only the first call proceeds.
+        """
+        if state["done"]:
+            return
+        state["done"] = True
+
+        def _fade_and_destroy(step: int = _FADE_STEPS) -> None:
+            alpha = step / _FADE_STEPS
+            try:
+                splash.attributes("-alpha", alpha)
+            except tk.TclError:
+                pass
+            if step > 0:
+                try:
+                    splash.after(_FADE_MS, _fade_and_destroy, step - 1)
+                    return
+                except tk.TclError:
+                    # Window gone – fall straight through to cleanup.
+                    pass
+            # Destroy (failure is fine) then always invoke the callback.
+            try:
+                splash.destroy()
+            except tk.TclError:
+                pass
+            if callback is not None:
+                try:
+                    root.after(0, callback)
+                except Exception:
+                    try:
+                        callback()
+                    except Exception:
+                        pass
+
+        _fade_and_destroy()
+
+    # ---- Read the on/off setting (silent fallback on any error) ----
     try:
         show = bool(settings.get("show_splash", True))
     except Exception:
@@ -58,202 +96,84 @@ def show_splash(
                 pass
         return
 
-    # Timing derived from splash_duration (seconds):
-    #   fade-in 20% · hold 60% · fade-out 20%
+    # ---- Discover the frame sequence ----
     try:
-        duration_s = float(settings.get("splash_duration", 2.0))
+        frames = sorted(
+            glob.glob(os.path.join(SPLASH_FRAMES_DIR, "frame_*.jpg"))
+        )
     except Exception:
-        duration_s = 2.0
-    duration_ms = max(500, int(duration_s * 1000))
-    fade_in_ms = int(duration_ms * 0.2)
-    hold_ms = int(duration_ms * 0.6)
-    fade_ms = max(1, fade_in_ms // _FADE_STEPS)
+        frames = []
+    if not frames:
+        # No frames bundled / unreadable – never block startup.
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                pass
+        return
 
-    # Glass parameters from settings
+    # ---- Build the fullscreen borderless Toplevel ----
+    splash = None
     try:
-        glass_alpha = float(settings.get("glass_alpha", 0.62))
-    except Exception:
-        glass_alpha = 0.62
-    try:
-        glass_blur = int(settings.get("glass_blur_radius", 24))
-    except Exception:
-        glass_blur = 24
-
-    splash = tk.Toplevel(root)
-    splash.overrideredirect(True)
-    splash.attributes("-topmost", True)
-    splash.withdraw()
-
-    # Position: centre screen
-    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    x, y = (sw - _W) // 2, (sh - _H) // 2
-    splash.geometry(f"{_W}x{_H}+{x}+{y}")
-    splash.configure(bg=_BG)
-    splash.attributes("-alpha", 0.0)
-
-    # ---- Glass effect ----
-    # Deiconify first so the window has a real HWND before DWM calls
-    splash.deiconify()
-    splash.update_idletasks()
-    _canvas_bg: str = "#0d0d2a"   # default: opaque dark (Level-3 or no PIL)
-    try:
-        from glass_effect import apply_glass  # noqa: PLC0415
-        apply_glass(splash, tint_color=_GLASS_TINT, tint_alpha=glass_alpha, blur_radius=glass_blur)
-        # With DWM-level glass the window bg is "#000000"; canvas must be
-        # transparent.  tk.Canvas doesn't support true transparency, but
-        # setting bg to the same solid black keeps visual coherence.
+        splash = tk.Toplevel(root)
+        splash.overrideredirect(True)
+        splash.attributes("-topmost", True)
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        splash.geometry(f"{sw}x{sh}+0+0")
         splash.configure(bg="#000000")
-        _canvas_bg = "#000000"
+        splash.deiconify()
+        splash.update_idletasks()
+
+        # 4:3 fit-to-screen + centring
+        scale = min(sw / _NATIVE_W, sh / _NATIVE_H)
+        disp_w = int(_NATIVE_W * scale)
+        disp_h = int(_NATIVE_H * scale)
+        cx, cy = (sw - disp_w) // 2, (sh - disp_h) // 2
+
+        canvas = tk.Canvas(
+            splash, bg="#000000", highlightthickness=0,
+        )
+        canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        img_obj = canvas.create_image(
+            cx + disp_w // 2, cy + disp_h // 2, anchor="center",
+        )
+
+        # ---- Per-frame playback ----
+        from PIL import Image, ImageTk  # noqa: PLC0415
+
+        def _play(i: int) -> None:
+            if state["done"]:
+                return
+            if i >= len(frames):
+                _finish()
+                return
+            try:
+                img = Image.open(frames[i])
+                img = img.resize((disp_w, disp_h), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                canvas.itemconfig(img_obj, image=photo)
+                state["photo"] = photo  # prevent GC
+            except Exception:
+                # Decode / draw failure – finish gracefully.
+                _finish()
+                return
+            try:
+                splash.after(_FRAME_MS, _play, i + 1)
+            except tk.TclError:
+                _finish()
+
+        _play(0)
     except Exception:
-        splash.configure(bg=_BG)
-
-    # ---- Canvas ----
-    canvas = tk.Canvas(splash, width=_W, height=_H, bg=_canvas_bg,
-                       highlightthickness=0)
-    canvas.place(x=0, y=0)
-
-    # Rounded rect border (cosmetic)
-    _round_rect(canvas, 2, 2, _W - 2, _H - 2, r=18,
-                outline=_ACCENT, fill="", width=1)
-
-    # Thin top accent line
-    canvas.create_line(40, 2, _W - 40, 2, fill=_ACCENT, width=2)
-
-    # Logo text (will be re-drawn for glow animation)
-    logo_id = canvas.create_text(
-        _W // 2, _H // 2 - 28,
-        text="AppLauncher",
-        fill=_TEXT_MAIN,
-        font=("Segoe UI", 34, "bold"),
-    )
-    sub_id = canvas.create_text(
-        _W // 2, _H // 2 + 18,
-        text="Quick Launch  ·  Stay Productive",
-        fill=_TEXT_SUB,
-        font=("Segoe UI", 11),
-    )
-
-    # Progress bar
-    bar_y = _H - 36
-    bar_x0, bar_x1 = 48, _W - 48
-    bar_w = bar_x1 - bar_x0
-    canvas.create_rectangle(bar_x0, bar_y, bar_x1, bar_y + 4,
-                             fill=_BAR_BG, outline="", width=0)
-    prog_bar = canvas.create_rectangle(bar_x0, bar_y, bar_x0, bar_y + 4,
-                                       fill=_BAR_FG, outline="", width=0)
-    pct_text = canvas.create_text(
-        _W // 2, bar_y - 10,
-        text="0%",
-        fill=_TEXT_SUB,
-        font=("Segoe UI", 8),
-    )
-
-    # ---- Animation state ----
-    state = {"prog": 0.0, "done": False}
-
-    # Progress bar fill – walk 0→100% across the whole duration
-    _total_ticks = max(1, duration_ms // _PROGRESS_MS)
-
-    def _tick_progress(tick: int = 0) -> None:
-        if state["done"]:
-            return
-        p = min(1.0, tick / _total_ticks)
-        state["prog"] = p
-        cur_x = bar_x0 + int(bar_w * p)
-        try:
-            canvas.coords(prog_bar, bar_x0, bar_y, cur_x, bar_y + 4)
-            canvas.itemconfig(pct_text, text=f"{int(p * 100)}%")
-        except tk.TclError:
-            return
-        if tick < _total_ticks:
-            splash.after(_PROGRESS_MS, _tick_progress, tick + 1)
-
-    # Glow pulse on logo
-    _glow_colors = _make_glow_palette(_TEXT_MAIN, _ACCENT, _GLOW_STEPS)
-
-    def _tick_glow(step: int = 0) -> None:
-        if state["done"]:
-            return
-        try:
-            canvas.itemconfig(logo_id, fill=_glow_colors[step % _GLOW_STEPS])
-        except tk.TclError:
-            return
-        splash.after(_GLOW_MS, _tick_glow, step + 1)
-
-    # Fade in
-    def _fade_in(step: int = 0) -> None:
-        alpha = step / _FADE_STEPS
-        try:
-            splash.attributes("-alpha", alpha)
-        except tk.TclError:
-            return
-        if step < _FADE_STEPS:
-            splash.after(fade_ms, _fade_in, step + 1)
-        else:
-            splash.after(hold_ms, _fade_out, _FADE_STEPS)
-
-    def _fade_out(step: int) -> None:
-        alpha = step / _FADE_STEPS
-        try:
-            splash.attributes("-alpha", alpha)
-        except tk.TclError:
-            return
-        if step > 0:
-            splash.after(fade_ms, _fade_out, step - 1)
-        else:
-            state["done"] = True
-            if callback is not None:
-                root.after(0, callback)
+        # Splash construction failed – clean up & fire the callback so the
+        # launcher can still start (main.py also has a fallback, but we stay
+        # self-sufficient).
+        if splash is not None:
             try:
                 splash.destroy()
-            except tk.TclError:
+            except Exception:
                 pass
-
-    # Kick everything off
-    _tick_progress()
-    _tick_glow()
-    _fade_in()
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _round_rect(
-    canvas: tk.Canvas,
-    x0: int, y0: int, x1: int, y1: int,
-    r: int = 12,
-    **kwargs,
-) -> None:
-    """Draw a rounded rectangle on *canvas*."""
-    canvas.create_arc(x0, y0, x0 + 2*r, y0 + 2*r, start=90,  extent=90, style="arc", **kwargs)
-    canvas.create_arc(x1 - 2*r, y0, x1, y0 + 2*r, start=0,   extent=90, style="arc", **kwargs)
-    canvas.create_arc(x1 - 2*r, y1 - 2*r, x1, y1, start=270, extent=90, style="arc", **kwargs)
-    canvas.create_arc(x0, y1 - 2*r, x0 + 2*r, y1, start=180, extent=90, style="arc", **kwargs)
-    canvas.create_line(x0 + r, y0, x1 - r, y0, **kwargs)
-    canvas.create_line(x1, y0 + r, x1, y1 - r, **kwargs)
-    canvas.create_line(x1 - r, y1, x0 + r, y1, **kwargs)
-    canvas.create_line(x0, y1 - r, x0, y0 + r, **kwargs)
-
-
-def _lerp_color(c1: str, c2: str, t: float) -> str:
-    """Linear interpolate between two hex colors."""
-    r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
-    r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
-    r = int(r1 + (r2 - r1) * t)
-    g = int(g1 + (g2 - g1) * t)
-    b = int(b1 + (b2 - b1) * t)
-    return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def _make_glow_palette(base: str, accent: str, steps: int) -> list[str]:
-    """Generate a glow pulse palette (base → accent → base)."""
-    half = steps // 2
-    palette = []
-    for i in range(half):
-        t = math.sin(math.pi * i / half) ** 2
-        palette.append(_lerp_color(base, accent, t * 0.7))
-    for i in range(steps - half):
-        t = math.sin(math.pi * i / (steps - half)) ** 2
-        palette.append(_lerp_color(base, accent, t * 0.7))
-    return palette
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                pass
