@@ -78,6 +78,13 @@ def main() -> None:
         _find_and_raise_window()
         sys.exit(0)
 
+    # Version snapshot: record version, snapshot current data on version change.
+    # Must run before show_splash, which imports settings and triggers the
+    # singleton load.  Legacy migration already happened when paths was imported.
+    from paths import snapshot_on_version_change  # noqa: PLC0415
+    from updater import CURRENT_VERSION  # noqa: PLC0415
+    snapshot_on_version_change(CURRENT_VERSION)
+
     # 2. We are the master instance – build the app
     root = tk.Tk()
     root.withdraw()  # hide until UI is ready

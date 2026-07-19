@@ -16,6 +16,8 @@ import math
 import tkinter as tk
 from typing import Callable, Optional
 
+from settings import settings
+
 
 # ---------------------------------------------------------------------------
 # Timing constants
@@ -42,6 +44,41 @@ def show_splash(
     root: tk.Tk,
     callback: Optional[Callable[[], None]] = None,
 ) -> None:
+    # ---- Read settings (silent fallback to defaults on any error) ----
+    try:
+        show = bool(settings.get("show_splash", True))
+    except Exception:
+        show = True
+    if not show:
+        # Splash disabled – fire the callback immediately and bail out.
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                pass
+        return
+
+    # Timing derived from splash_duration (seconds):
+    #   fade-in 20% · hold 60% · fade-out 20%
+    try:
+        duration_s = float(settings.get("splash_duration", 2.0))
+    except Exception:
+        duration_s = 2.0
+    duration_ms = max(500, int(duration_s * 1000))
+    fade_in_ms = int(duration_ms * 0.2)
+    hold_ms = int(duration_ms * 0.6)
+    fade_ms = max(1, fade_in_ms // _FADE_STEPS)
+
+    # Glass parameters from settings
+    try:
+        glass_alpha = float(settings.get("glass_alpha", 0.62))
+    except Exception:
+        glass_alpha = 0.62
+    try:
+        glass_blur = int(settings.get("glass_blur_radius", 24))
+    except Exception:
+        glass_blur = 24
+
     splash = tk.Toplevel(root)
     splash.overrideredirect(True)
     splash.attributes("-topmost", True)
@@ -61,7 +98,7 @@ def show_splash(
     _canvas_bg: str = "#0d0d2a"   # default: opaque dark (Level-3 or no PIL)
     try:
         from glass_effect import apply_glass  # noqa: PLC0415
-        apply_glass(splash, tint_color=_GLASS_TINT, tint_alpha=0.62, blur_radius=24)
+        apply_glass(splash, tint_color=_GLASS_TINT, tint_alpha=glass_alpha, blur_radius=glass_blur)
         # With DWM-level glass the window bg is "#000000"; canvas must be
         # transparent.  tk.Canvas doesn't support true transparency, but
         # setting bg to the same solid black keeps visual coherence.
@@ -114,8 +151,8 @@ def show_splash(
     # ---- Animation state ----
     state = {"prog": 0.0, "done": False}
 
-    # Progress bar fill
-    _total_ticks = int((_HOLD_MS + _FADE_STEPS * _FADE_MS * 2) / _PROGRESS_MS)
+    # Progress bar fill – walk 0→100% across the whole duration
+    _total_ticks = max(1, duration_ms // _PROGRESS_MS)
 
     def _tick_progress(tick: int = 0) -> None:
         if state["done"]:
@@ -151,9 +188,9 @@ def show_splash(
         except tk.TclError:
             return
         if step < _FADE_STEPS:
-            splash.after(_FADE_MS, _fade_in, step + 1)
+            splash.after(fade_ms, _fade_in, step + 1)
         else:
-            splash.after(_HOLD_MS, _fade_out, _FADE_STEPS)
+            splash.after(hold_ms, _fade_out, _FADE_STEPS)
 
     def _fade_out(step: int) -> None:
         alpha = step / _FADE_STEPS
@@ -162,7 +199,7 @@ def show_splash(
         except tk.TclError:
             return
         if step > 0:
-            splash.after(_FADE_MS, _fade_out, step - 1)
+            splash.after(fade_ms, _fade_out, step - 1)
         else:
             state["done"] = True
             if callback is not None:

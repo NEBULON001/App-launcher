@@ -18,6 +18,7 @@ env/
 
 # Runtime config
 config.json
+settings.json
 
 # Build artifacts
 *.exe

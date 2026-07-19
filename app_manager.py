@@ -28,9 +28,7 @@ class AppEntry(TypedDict):
 # Constants
 # ---------------------------------------------------------------------------
 
-CONFIG_FILE: str = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "config.json"
-)
+from paths import CONFIG_FILE
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +78,8 @@ class AppManager:
 
     def __init__(self) -> None:
         self._apps: list[AppEntry] = []
+        self._lnk_cache: dict[str, str] = {}  # norm exe path → lnk display name
+        self._lnk_cache_built: bool = False
         self._load()
 
     # ------------------------------------------------------------------
@@ -127,7 +127,18 @@ class AppManager:
                     f"Application already registered: {resolved_path!r}"
                 )
 
-        name: str = os.path.splitext(os.path.basename(resolved_path))[0]
+        # Determine display name: prefer the shortcut's file name over the
+        # executable's file name (e.g. "微信.lnk" → "微信", not "WeChat").
+        if ext == ".lnk":
+            # User selected a shortcut → use the shortcut's file name (drop .lnk).
+            name: str = os.path.splitext(os.path.basename(raw_path))[0]
+        else:
+            # User selected the executable → look for a matching .lnk shortcut
+            # in common locations; fall back to the exe file name if none matches.
+            lnk_name = self._find_lnk_name_for_exe(resolved_path)
+            name = lnk_name if lnk_name else os.path.splitext(
+                os.path.basename(resolved_path)
+            )[0]
         entry: AppEntry = {"name": name, "path": resolved_path, "icon": ""}
         self._apps.append(entry)
         self._save()
@@ -145,6 +156,25 @@ class AppManager:
         if index < 0 or index >= len(self._apps):
             raise IndexError(f"App index out of range: {index}")
         del self._apps[index]
+        self._save()
+
+    def move_app(self, from_index: int, to_index: int) -> None:
+        """Move the app at *from_index* so that it ends up at position *to_index*.
+
+        *to_index* is the desired final position (0-based, i.e. insert before
+        that position).  Indices are clamped to valid ranges; a no-op when
+        *from_index == to_index* or out of range.
+        """
+        n = len(self._apps)
+        if from_index < 0 or from_index >= n or from_index == to_index:
+            return
+        item = self._apps.pop(from_index)
+        # After popping, if we removed an element before the target, the target
+        # shifts down by one.
+        if from_index < to_index:
+            to_index -= 1
+        to_index = max(0, min(to_index, len(self._apps)))
+        self._apps.insert(to_index, item)
         self._save()
 
     # ------------------------------------------------------------------
@@ -219,3 +249,70 @@ class AppManager:
         """Persist the current app list to *config.json*."""
         with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
             json.dump(self._apps, fh, ensure_ascii=False, indent=2)
+
+    # ------------------------------------------------------------------
+    # Private helpers – shortcut name lookup
+    # ------------------------------------------------------------------
+
+    def _find_lnk_name_for_exe(self, exe_path: str) -> str | None:
+        """Return the display name of a .lnk whose target matches *exe_path*.
+
+        Scans the user's desktop, public desktop, and both Start Menu
+        ``Programs`` folders for ``.lnk`` files.  Each shortcut's target is
+        resolved via :func:`_resolve_lnk` and compared (case-insensitive,
+        after :func:`os.path.realpath`) to *exe_path*.
+
+        Results are cached on the instance: the first call performs the full
+        scan, subsequent calls are dictionary lookups.
+
+        Args:
+            exe_path: Absolute path to the real executable.
+
+        Returns:
+            The shortcut's display name (``.lnk`` extension removed) when a
+            matching shortcut is found, otherwise ``None``.
+        """
+        key = os.path.normcase(os.path.realpath(exe_path))
+        if not self._lnk_cache_built:
+            self._populate_lnk_cache()
+            self._lnk_cache_built = True
+        return self._lnk_cache.get(key)
+
+    def _populate_lnk_cache(self) -> None:
+        """Scan common shortcut locations and fill ``self._lnk_cache``.
+
+        Searches (recursively) the user desktop, public desktop, system Start
+        Menu and user Start Menu.  Broken shortcuts and missing directories
+        are silently skipped.
+        """
+        search_dirs = [
+            os.path.join(os.path.expanduser("~"), "Desktop"),
+            os.path.join(
+                os.environ.get("PUBLIC", "C:\\Users\\Public"), "Desktop"
+            ),
+            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
+            os.path.join(
+                os.environ.get("APPDATA", ""),
+                "Microsoft",
+                "Windows",
+                "Start Menu",
+                "Programs",
+            ),
+        ]
+        for directory in search_dirs:
+            if not os.path.isdir(directory):
+                continue
+            for root, _dirs, files in os.walk(directory):
+                for fname in files:
+                    if not fname.lower().endswith(".lnk"):
+                        continue
+                    lnk_path = os.path.join(root, fname)
+                    target = _resolve_lnk(lnk_path)
+                    if not target or target == lnk_path:
+                        # Resolution failed (broken shortcut) → skip.
+                        continue
+                    norm_target = os.path.normcase(os.path.realpath(target))
+                    display_name = os.path.splitext(fname)[0]
+                    # First match wins; don't overwrite existing entries.
+                    if norm_target not in self._lnk_cache:
+                        self._lnk_cache[norm_target] = display_name
