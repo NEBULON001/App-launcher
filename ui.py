@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from app_manager import AppManager
 from autostart import disable_autostart, enable_autostart, is_autostart_enabled
 from tray import setup_tray
-from glass_effect import apply_glass
+from glass_effect import apply_glass, show_in_taskbar
 from paths import backup_now, list_backups, open_data_dir, restore_backup
 from settings import settings
 from updater import CURRENT_VERSION, UpdateInfo, check_for_update
@@ -143,6 +143,7 @@ class LauncherApp:
 
         # Apply frosted glass effect (parameters from user settings)
         root.update_idletasks()
+        show_in_taskbar(root)
         try:
             apply_glass(
                 root,

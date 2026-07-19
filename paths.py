@@ -35,6 +35,31 @@ _PERSISTED_FILES = ("config.json", "settings.json")
 
 
 # ---------------------------------------------------------------------------
+# Bundled resource paths (icons etc.)
+# ---------------------------------------------------------------------------
+
+def resource_path(relative_path: str) -> str:
+    """Absolute path to a bundled resource (icon, image, ...).
+
+    - Source run: relative to this module's directory (the launcher folder).
+    - Frozen (PyInstaller onefile): relative to ``sys._MEIPASS`` -- the
+      extracted temp dir where ``--add-data`` files are unpacked.
+
+    Never raises; returns the joined path even if the file does not exist,
+    so callers can decide how to handle a missing resource.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = sys._MEIPASS  # type: ignore[union-attr]
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, relative_path)
+
+
+# Launcher icon shipped under icons/, bundled into the exe via --add-data.
+ICON_FILE = resource_path("icons/app_launcher.ico")
+
+
+# ---------------------------------------------------------------------------
 # Directory bootstrap
 # ---------------------------------------------------------------------------
 

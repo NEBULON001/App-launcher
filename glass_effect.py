@@ -29,6 +29,12 @@ apply_glass(
 
 remove_glass(widget) -> None
     Remove any applied glass effect and restore a solid background.
+
+show_in_taskbar(widget) -> None
+    Ensure a borderless (``overrideredirect(True)``) window gets a taskbar
+    button by setting ``WS_EX_APPWINDOW`` (and clearing ``WS_EX_TOOLWINDOW``)
+    on the extended window style, then forcing a frame change so the shell
+    picks it up.  Safe to call before the window is first shown.  Never raises.
 """
 
 from __future__ import annotations
@@ -303,6 +309,54 @@ _registry: dict[int, _GlassState] = {}
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def show_in_taskbar(widget: tk.Widget) -> None:
+    """Ensure *widget*'s top-level window shows a taskbar button.
+
+    Borderless (``overrideredirect(True)``) windows are ``WS_POPUP`` and have
+    no taskbar button by default, so a running launcher is invisible on the
+    taskbar.  This clears ``WS_EX_TOOLWINDOW`` and sets ``WS_EX_APPWINDOW`` on
+    the extended style, then forces a frame change (``SWP_FRAMECHANGED``) so
+    the shell refreshes its taskbar entry.  Safe to call before the window is
+    first shown.  Never raises — styling failures must not crash the launcher.
+    """
+    try:
+        user32 = _get_user32()
+        if user32 is None:
+            return
+        hwnd = _hwnd(widget)
+
+        # 64-bit-safe prototypes: c_long truncates pointers on x64.
+        user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.GetWindowLongPtrW.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
+        user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.SetWindowLongPtrW.argtypes = [
+            ctypes.wintypes.HWND,
+            ctypes.c_int,
+            ctypes.c_ssize_t,
+        ]
+
+        GWL_EXSTYLE = -20
+        WS_EX_APPWINDOW = 0x00040000
+        WS_EX_TOOLWINDOW = 0x00000080
+
+        ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+        ex = (ex & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+        user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex)
+
+        # Force the taskbar/shell to notice the style change.
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SWP_FRAMECHANGED = 0x0020
+        flags = (
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+        )
+        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, flags)
+    except Exception:
+        pass
 
 
 def apply_glass(

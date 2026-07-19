@@ -18,6 +18,7 @@ Start-up sequence:
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 import tkinter as tk
 
@@ -59,11 +60,14 @@ def _find_and_raise_window() -> None:
         user32.EnumWindows(EnumWindowsProc(_enum_proc), 0)
 
     if hwnd:
-        # Restore if minimized
-        if user32.IsIconic(hwnd):
+        try:
+            # Always restore/show: SW_RESTORE both un-minimizes and reveals a
+            # withdrawn (root.withdraw) window; safe for already-visible windows.
             user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        # Bring to front
-        user32.SetForegroundWindow(hwnd)
+            # Bring to front
+            user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +92,17 @@ def main() -> None:
     # 2. We are the master instance – build the app
     root = tk.Tk()
     root.withdraw()  # hide until UI is ready
+
+    # Set the app icon on the root window as early as possible: the splash,
+    # main window, and every child Toplevel (settings / launch-all /
+    # update dialog) all inherit the root icon.  A missing icon file must
+    # never block startup -- fall back to the Tk default silently.
+    try:
+        from paths import ICON_FILE  # noqa: PLC0415
+        if os.path.exists(ICON_FILE):
+            root.iconbitmap(ICON_FILE)
+    except Exception:  # noqa: BLE001
+        pass
 
     # 3. Show splash (non-blocking – uses root.after() callbacks).
     def _on_splash_done() -> None:

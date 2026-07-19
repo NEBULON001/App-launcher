@@ -6,11 +6,14 @@ runs it in a background thread, and wires up the menu / double-click handlers.
 
 from __future__ import annotations
 
+import os
 import threading
 import tkinter as tk
 from typing import Callable
 
 from PIL import Image, ImageDraw
+
+from paths import ICON_FILE
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +61,21 @@ def _make_icon_image(size: int = 64) -> Image.Image:
     return img
 
 
+def _load_tray_icon() -> Image.Image:
+    """Load the bundled app icon for the tray; fall back if unavailable.
+
+    Tries to open the shipped ``icons/app_launcher.ico``.  If the file is
+    missing or unreadable (e.g. not bundled correctly), falls back to the
+    programmatically generated icon so the tray always has *something*.
+    """
+    try:
+        if ICON_FILE and os.path.exists(ICON_FILE):
+            return Image.open(ICON_FILE)
+    except Exception:  # noqa: BLE001
+        pass
+    return _make_icon_image()
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -79,7 +97,7 @@ def setup_tray(
     """
     import pystray  # type: ignore[import]
 
-    icon_image = _make_icon_image()
+    icon_image = _load_tray_icon()
 
     def _on_show_action(icon: pystray.Icon, item: pystray.MenuItem) -> None:  # noqa: ARG001
         root.after(0, on_show)
